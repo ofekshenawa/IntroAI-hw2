@@ -1,9 +1,10 @@
 from Agent import Agent, AgentGreedy
 from WarehouseEnv import WarehouseEnv, manhattan_distance
 import random
+import time
+import math
+from func_timeout import func_timeout, FunctionTimedOut
 
-
-# TODO: section a : 3
 def smart_heuristic(env: WarehouseEnv, robot_id: int):
     """
     h(state, robot_id) = CreditDiff + DeliveryProgress + BatterySafety +
@@ -113,28 +114,195 @@ def smart_heuristic(env: WarehouseEnv, robot_id: int):
 
     return score
 
-
-
-
 class AgentGreedyImproved(AgentGreedy):
     def heuristic(self, env: WarehouseEnv, robot_id: int):
         return smart_heuristic(env, robot_id)
 
 
 class AgentMinimax(Agent):
-    # TODO: section b : 4
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        raise NotImplementedError()
+        best_op = None
+        start_time = time.time()
+        
+        for depth in range(1, 100):
+            try:
+                time_remaining = time_limit - (time.time() - start_time)
+                safe_time = time_remaining - 0.05
+                if safe_time <= 0:
+                    break
+
+                iteration_best_op = func_timeout(safe_time, self.get_op, args=(env, agent_id, depth))
+                
+                best_op = iteration_best_op
+                
+            except FunctionTimedOut:
+                break
+                
+        return best_op
+
+    def get_op(self, env: WarehouseEnv, agent_id, depth):
+        operators = env.get_legal_operators(agent_id)
+        if not operators:
+            return None
+
+        other_robot = (agent_id + 1) % 2
+
+        best_value = -math.inf
+        best_op = operators[0]
+
+        for op in operators:
+            child_env = env.clone()
+            child_env.apply_operator(agent_id, op)
+            
+            value = self.minimax(child_env, depth - 1, other_robot, agent_id)
+            
+            if value > best_value:
+                best_value = value
+                best_op = op
+                
+        return best_op
+    
+    def minimax(self, env: WarehouseEnv, depth, current_agent_id, original_agent_id):
+        if depth == 0 or env.done():
+            return smart_heuristic(env, original_agent_id)
+        
+        operators = env.get_legal_operators(current_agent_id)
+        if not operators:
+            return smart_heuristic(env, original_agent_id)
+
+        is_max = (current_agent_id == original_agent_id)
+        other_robot = (current_agent_id + 1) % 2
+
+        if is_max:
+            value = -math.inf
+            for op in operators:
+                child_env = env.clone()
+                child_env.apply_operator(current_agent_id, op)
+                value = max(value, self.minimax(child_env, depth - 1, other_robot, original_agent_id))
+            return value
+        else:
+            value = math.inf
+            for op in operators:
+                child_env = env.clone()
+                child_env.apply_operator(current_agent_id, op)
+                value = min(value, self.minimax(child_env, depth - 1, other_robot, original_agent_id))
+            return value
 
 
 class AgentAlphaBeta(Agent):
-    # TODO: section c : 1
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        raise NotImplementedError()
+        best_op = None
+        start_time = time.time()
+
+        # TODO: Maybe a waste of time?
+        operators = env.get_legal_operators(agent_id)
+        if not operators:
+            return None
+        best_op = operators[0]
+        
+        for depth in range(1, 100):
+            time_remaining = time_limit - (time.time() - start_time)
+            if time_remaining <= 0.05:
+                break
+            try:        
+                iteration_best_op = self.alpha_beta_get_op(env, agent_id, depth, start_time, time_limit, best_op)
+                best_op = iteration_best_op
+
+            except self.TimeOut:
+                break
+                
+        return best_op
+
+    def alpha_beta_get_op(self, env: WarehouseEnv, agent_id, depth, start_time, time_limit, fallback_op):
+        time_remaining = time_limit - (time.time() - start_time)
+        if time_remaining <= 0.05:
+            raise self.TimeOut()
+
+        operators = env.get_legal_operators(agent_id)
+        if not operators:
+            return None
+        
+        operators.sort(key=lambda op: self.quick_heuristic(op), reverse=True)
+
+        # Check the best operation from last iteration first for better pruning
+        if fallback_op in operators:
+            operators.remove(fallback_op)
+            operators.insert(0, fallback_op)
+
+        other_robot = (agent_id + 1) % 2
+        best_value = -math.inf
+        best_op = operators[0]
+        alpha = -math.inf
+        beta = math.inf
+
+        for op in operators:
+            # TODO: Add time check here too?
+            child_env = env.clone()
+            child_env.apply_operator(agent_id, op)
+            
+            value = self.alpha_beta_minimax(child_env, depth - 1, other_robot, agent_id, alpha, beta, start_time, time_limit)
+            
+            if value > best_value:
+                best_value = value
+                best_op = op
+
+            alpha = max(alpha, best_value)
+            if beta <= alpha:
+                break
+            
+        return best_op
+
+    def alpha_beta_minimax(self, env: WarehouseEnv, depth, current_agent_id, original_agent_id, alpha, beta, start_time, time_limit):
+        time_remaining = time_limit - (time.time() - start_time)
+        if time_remaining <= 0.05:
+            raise self.TimeOut()
+        
+        if depth == 0 or env.done():
+            return smart_heuristic(env, original_agent_id)
+
+        operators = env.get_legal_operators(current_agent_id)
+        if not operators:
+            return smart_heuristic(env, original_agent_id)
+        
+        is_max = (current_agent_id == original_agent_id)
+        other_robot = (current_agent_id + 1) % 2
+
+        if is_max:
+            value = -math.inf
+            for op in operators:
+                # TODO: Add time check here too?
+                child_env = env.clone()
+                child_env.apply_operator(current_agent_id, op)
+                value = max(value, self.alpha_beta_minimax(child_env, depth - 1, other_robot, original_agent_id, alpha, beta, start_time, time_limit))
+                alpha = max(alpha, value)
+                if beta <= alpha:
+                    break
+            return value
+        
+        else:
+            value = math.inf
+            for op in operators:
+                # TODO: Add time check here too?
+                child_env = env.clone()
+                child_env.apply_operator(current_agent_id, op)
+                value = min(value, self.alpha_beta_minimax(child_env, depth - 1, other_robot, original_agent_id, alpha, beta, start_time, time_limit))
+                beta = min(beta, value)
+                if beta <= alpha:
+                    break
+            return value
+    
+    # TODO: improve this heuristic, keep it fast
+    def quick_heuristic(self, op):
+        if op == 'drop off': return 100
+        if op == 'pick up': return 50
+        if 'move' in op: return 1
+        return 0
+
+    class TimeOut(Exception):
+        pass
 
 
 class AgentExpectimax(Agent):
-    # TODO: section d : 3
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
         raise NotImplementedError()
 
