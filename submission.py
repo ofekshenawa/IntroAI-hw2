@@ -304,7 +304,87 @@ class AgentAlphaBeta(Agent):
 
 class AgentExpectimax(Agent):
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        raise NotImplementedError()
+        best_op = None
+        start_time = time.time()
+
+        for depth in range(1, 100):
+            try:
+                time_remaining = time_limit - (time.time() - start_time)
+                safe_time = time_remaining - 0.05
+                if safe_time <= 0:
+                    break
+
+                iteration_best_op = func_timeout(safe_time, self.get_op, args=(env, agent_id, depth))
+
+                best_op = iteration_best_op
+
+            except FunctionTimedOut:
+                break
+
+        return best_op
+
+    def get_op(self, env: WarehouseEnv, agent_id, depth):
+        operators = env.get_legal_operators(agent_id)
+        if not operators:
+            return None
+
+        other_robot = (agent_id + 1) % 2
+
+        best_value = -math.inf
+        best_op = operators[0]
+
+        for op in operators:
+            child_env = env.clone()
+            child_env.apply_operator(agent_id, op)
+
+            value = self.expectimax(child_env, depth - 1, other_robot, agent_id)
+
+            if value > best_value:
+                best_value = value
+                best_op = op
+
+        return best_op
+
+    def expectimax(self, env: WarehouseEnv, depth, current_agent_id, original_agent_id):
+        if depth == 0 or env.done():
+            return smart_heuristic(env, original_agent_id)
+
+        operators = env.get_legal_operators(current_agent_id)
+        if not operators:
+            return smart_heuristic(env, original_agent_id)
+
+        is_max = (current_agent_id == original_agent_id)
+        other_robot = (current_agent_id + 1) % 2
+
+        if is_max:
+            value = -math.inf
+            for op in operators:
+                child_env = env.clone()
+                child_env.apply_operator(current_agent_id, op)
+                value = max(value, self.expectimax(child_env, depth - 1, other_robot, original_agent_id))
+            return value
+        else:
+            total_weight = 0
+            for op in operators:
+                if op == "move west" or op == "pick up":
+                    total_weight += 3
+                else:
+                    total_weight += 1
+
+            expected_value = 0
+            for op in operators:
+                child_env = env.clone()
+                child_env.apply_operator(current_agent_id, op)
+                child_value = self.expectimax(child_env, depth - 1, other_robot, original_agent_id)
+
+                if op == "move west" or op == "pick up":
+                    probability = 3 / total_weight
+                else:
+                    probability = 1 / total_weight
+
+                expected_value += probability * child_value
+
+            return expected_value
 
 
 # here you can check specific paths to get to know the environment
