@@ -76,7 +76,7 @@ def run_agents():
         robot0_wins = 0
         robot1_wins = 0
         draws = 0
-        num_of_games = 100
+        num_of_games = 10
 
         for i in range(num_of_games):
             env.generate(args.seed + i, 2*args.count_steps)

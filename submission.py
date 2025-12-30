@@ -7,110 +7,160 @@ from func_timeout import func_timeout, FunctionTimedOut
 
 def smart_heuristic(env: WarehouseEnv, robot_id: int):
     """
-    h(state, robot_id) = CreditDiff + DeliveryProgress + BatterySafety +
-                         PackageAcquisition + CompetitiveAdvantage + FuturePlanning
-    """
+    Simplified heuristic with clear priorities:
+    1. Credit difference is the ultimate goal
+    2. Having a package and being close to destination is good
+    3. Being close to available packages is good
+    4. Battery management when needed
 
+    KEY INSIGHT: The heuristic evaluates the STATE AFTER an action.
+    - After 'pick up': robot has package, dist_to_dest > 0 usually
+    - After 'drop off': robot has no package, credit increased
+    - After 'move': position changed
+    """
     my_robot = env.get_robot(robot_id)
     opponent_robot = env.get_robot((robot_id + 1) % 2)
 
-    # Credit difference 
-    score = 1000 * (my_robot.credit - opponent_robot.credit)
-
-    # Low battery 
+    # Base score from credit difference (this is the ultimate goal)
     credit_diff = my_robot.credit - opponent_robot.credit
-    battery_diff = my_robot.battery - opponent_robot.battery
+    score = 1000 * credit_diff
 
-    if my_robot.battery <= 2:
-        if credit_diff > 0 and opponent_robot.battery <= 2:
-            score -= 1000 
-        else:
-            score -= 5000 
-    elif my_robot.battery <= 5:
-        if credit_diff > 0 and battery_diff >= 0:
-            score -= 200
-        else:
-            score -= 1000
+    # Get active packages for later use
+    active_packages = [p for p in env.packages if p.on_board]
 
-    # Package handling
+    # PACKAGE HANDLING - most important tactical consideration
     if my_robot.package is not None:
-        # Holding a package
-        package_reward = 2 * manhattan_distance(my_robot.package.position, my_robot.package.destination)
-        dist_to_dest = manhattan_distance(my_robot.position, my_robot.package.destination)
+        # Robot is holding a package - deliver it!
+        package = my_robot.package
+        dest = package.destination
+        dist_to_dest = manhattan_distance(my_robot.position, dest)
 
-        score += 500 * package_reward
-        score -= 100 * dist_to_dest
+        # CRITICAL FIX for minimax oscillation:
+        # The holding score must ALWAYS be strictly greater than on-package score.
+        # Otherwise, minimax looks ahead and prefers the "on package" state over
+        # the "holding package" state, causing it to not pick up!
+        #
+        # Solution: Use a HIGH base for holding that always beats on-package.
+        #
+        # Holding: 2000 - 50 * dist_to_dest (range: 1500-2000 for dist 0-10)
+        # On-package: 500 + 50 * reward (max ~900 for reward=8)
+        #
+        # Credit gain: 1000 * reward (min 2000 for reward=2)
+        # At destination: holding=2000, credit=2000+ → drop-off slightly better
 
-        if dist_to_dest == 0:
-            score += 2000
+        score += 2000 - 50 * dist_to_dest
+
     else:
-        # Not holding package
-        active_packages = [p for p in env.packages if p.on_board]
-
+        # Robot is not holding a package - look for packages to pick up
         if active_packages:
-            best_package_score = float('-inf')
+            # Find the best package to pursue
+            best_package_value = float('-inf')
 
             for package in active_packages:
+                # Skip packages at opponent's position (blocked)
+                if package.position == opponent_robot.position:
+                    continue
+
                 package_reward = 2 * manhattan_distance(package.position, package.destination)
                 my_dist = manhattan_distance(my_robot.position, package.position)
                 opp_dist = manhattan_distance(opponent_robot.position, package.position)
 
-                pkg_score = 300 * package_reward   
-                pkg_score -= 80 * my_dist          
+                # Value = potential reward - cost to get there
+                # Use smaller coefficients to ensure on-package < holding
+                pkg_value = 50 * package_reward  # Reduced coefficient
+                pkg_value -= 100 * my_dist  # Distance penalty
 
-                # Competitive advantage
-                if my_dist < opp_dist:
-                    pkg_score += 200               # Bonus if closer than opponent
-
+                # ON the package - modest bonus
+                # Must be < minimum holding score (2000 - 50*10 = 1500)
+                # So total on-package value should be < 1500
+                #
+                # On-package = 50*reward - 0 + 500 = 500 + 50*reward
+                # For reward=8: 500 + 400 = 900 < 1500 ✓
+                # For reward=16: 500 + 800 = 1300 < 1500 ✓
                 if my_dist == 0:
-                    pkg_score += 1500              # Bonus for immediate pickup
+                    pkg_value += 500  # On-package bonus
+                # Bonus if we're closer than opponent
+                elif my_dist < opp_dist:
+                    pkg_value += 100
 
-                best_package_score = max(best_package_score, pkg_score)
+                best_package_value = max(best_package_value, pkg_value)
 
-            score += best_package_score
+            if best_package_value != float('-inf'):
+                score += best_package_value
 
-    # Battery management
-    if my_robot.credit > 0 and my_robot.battery < 10:
-        dist_to_charge = min(manhattan_distance(my_robot.position, cs.position) for cs in env.charge_stations)
+        # Future packages (lower priority)
+        future_packages = [p for p in env.packages if not p.on_board]
+        if future_packages:
+            best_future = 0
+            for package in future_packages:
+                pkg_reward = 2 * manhattan_distance(package.position, package.destination)
+                dist = manhattan_distance(my_robot.position, package.position)
+                value = 10 * pkg_reward - 20 * dist
+                best_future = max(best_future, value)
+            score += best_future
 
-        credit_diff = my_robot.credit - opponent_robot.credit
-        battery_diff = my_robot.battery - opponent_robot.battery
+    # BATTERY MANAGEMENT - must handle battery before anything else when critical
+    if env.charge_stations:
+        min_charge_dist = min(manhattan_distance(my_robot.position, cs.position)
+                              for cs in env.charge_stations)
+    else:
+        min_charge_dist = 100  # No charge stations
 
-        opponent_potential = opponent_robot.battery * 2
-
-        should_charge = False
-        charge_urgency = 0
-
-        if credit_diff < 0:
-            should_charge = True
-            charge_urgency = 2
-        elif battery_diff < -5:
-            if credit_diff < opponent_potential:
-                should_charge = True
-                charge_urgency = 2
-        elif credit_diff > 30 and my_robot.battery < 5:
-            should_charge = True
-            charge_urgency = 1 
-
-        if should_charge:
-            score -= (50 * charge_urgency) * dist_to_charge
-            if dist_to_charge == 0:
-                score += (400 * charge_urgency)
-
-    # Competitive awareness
-    if opponent_robot.package is not None:
+    if my_robot.battery <= 2:
+        # Critical battery - must charge or die
+        # Huge penalty that overrides everything except being on charge station
+        score -= 5000
+        # Strong incentive to get to charge station
+        if min_charge_dist == 0:
+            # On charge station - very good
+            score += 6000  # Overcomes the -5000 penalty
+        else:
+            score -= 500 * min_charge_dist  # Get to charge station ASAP
+    elif my_robot.battery <= 5:
+        # Low battery - consider charging
         score -= 300
+        # Bonus for being close to charge station
+        score -= 50 * min_charge_dist
 
-    # Future packages consideration
-    future_packages = [p for p in env.packages if not p.on_board]
-    if future_packages and my_robot.package is None:
-        best_future_value = 0
-        for package in future_packages:
-            package_reward = 2 * manhattan_distance(package.position, package.destination)
-            dist_to_pkg = manhattan_distance(my_robot.position, package.position)
-            future_value = 20 * package_reward - 5 * dist_to_pkg
-            best_future_value = max(best_future_value, future_value)
-        score += best_future_value
+    # Competitive awareness - small penalty if opponent has package
+    if opponent_robot.package is not None:
+        score -= 100
+
+    # ANTI-OSCILLATION: When no accessible packages, have a clear goal
+    # Check if there are any accessible active packages
+    accessible_packages = [p for p in active_packages if p.position != opponent_robot.position]
+
+    if my_robot.package is None and not accessible_packages:
+        # No packages to pursue - the robot needs a goal to prevent oscillation
+        future_packages = [p for p in env.packages if not p.on_board]
+
+        # Check if on a future package spawn location
+        on_future_pkg = any(p.position == my_robot.position for p in future_packages)
+
+        if env.charge_stations:
+            min_charge_dist = min(manhattan_distance(my_robot.position, cs.position)
+                                  for cs in env.charge_stations)
+        else:
+            min_charge_dist = 100
+
+        if on_future_pkg:
+            # On a future package spawn - strong bonus to stay here and wait
+            score += 15000
+        elif min_charge_dist == 0 and my_robot.credit > 0:
+            # On charge station with credit - strong bonus to stay/charge
+            # Need to overcome the credit loss from charging
+            score += 10000 + my_robot.credit * 1000
+        elif my_robot.credit > 0:
+            # Have credit - move toward charge station
+            score -= 500 * min_charge_dist
+        elif future_packages:
+            # No credit - move toward future packages
+            best_future_dist = min(manhattan_distance(my_robot.position, p.position)
+                                   for p in future_packages)
+            score -= 300 * best_future_dist
+        else:
+            # No future packages - stay near charge station
+            score -= 500 * min_charge_dist
 
     return score
 
@@ -148,18 +198,22 @@ class AgentMinimax(Agent):
         other_robot = (agent_id + 1) % 2
 
         best_value = -math.inf
+        best_immediate = -math.inf  # Tie-breaker: prefer higher immediate heuristic
         best_op = operators[0]
 
         for op in operators:
             child_env = env.clone()
             child_env.apply_operator(agent_id, op)
-            
+
             value = self.minimax(child_env, depth - 1, other_robot, agent_id)
-            
-            if value > best_value:
+            immediate = smart_heuristic(child_env, agent_id)  # For tie-breaking
+
+            # Prefer higher minimax value, break ties with immediate heuristic
+            if value > best_value or (value == best_value and immediate > best_immediate):
                 best_value = value
+                best_immediate = immediate
                 best_op = op
-                
+
         return best_op
     
     def minimax(self, env: WarehouseEnv, depth, current_agent_id, original_agent_id):
@@ -231,25 +285,28 @@ class AgentAlphaBeta(Agent):
 
         other_robot = (agent_id + 1) % 2
         best_value = -math.inf
+        best_immediate = -math.inf  # Tie-breaker
         best_op = operators[0]
         alpha = -math.inf
         beta = math.inf
 
         for op in operators:
-            # TODO: Add time check here too?
             child_env = env.clone()
             child_env.apply_operator(agent_id, op)
-            
+
             value = self.alpha_beta_minimax(child_env, depth - 1, other_robot, agent_id, alpha, beta, start_time, time_limit)
-            
-            if value > best_value:
+            immediate = smart_heuristic(child_env, agent_id)
+
+            # Prefer higher minimax value, break ties with immediate heuristic
+            if value > best_value or (value == best_value and immediate > best_immediate):
                 best_value = value
+                best_immediate = immediate
                 best_op = op
 
             alpha = max(alpha, best_value)
             if beta <= alpha:
                 break
-            
+
         return best_op
 
     def alpha_beta_minimax(self, env: WarehouseEnv, depth, current_agent_id, original_agent_id, alpha, beta, start_time, time_limit):
@@ -331,6 +388,7 @@ class AgentExpectimax(Agent):
         other_robot = (agent_id + 1) % 2
 
         best_value = -math.inf
+        best_immediate = -math.inf  # Tie-breaker
         best_op = operators[0]
 
         for op in operators:
@@ -338,9 +396,12 @@ class AgentExpectimax(Agent):
             child_env.apply_operator(agent_id, op)
 
             value = self.expectimax(child_env, depth - 1, other_robot, agent_id)
+            immediate = smart_heuristic(child_env, agent_id)
 
-            if value > best_value:
+            # Prefer higher expectimax value, break ties with immediate heuristic
+            if value > best_value or (value == best_value and immediate > best_immediate):
                 best_value = value
+                best_immediate = immediate
                 best_op = op
 
         return best_op
