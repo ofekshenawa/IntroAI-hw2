@@ -120,27 +120,37 @@ class AgentGreedyImproved(AgentGreedy):
 
 
 class AgentMinimax(Agent):
+    class TimeOut(Exception):
+        pass
+
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
         best_op = None
         start_time = time.time()
-        
+
+        operators = env.get_legal_operators(agent_id)
+        if not operators:
+            return None
+        best_op = operators[0]
+
         for depth in range(1, 100):
             try:
                 time_remaining = time_limit - (time.time() - start_time)
-                safe_time = time_remaining - 0.05
-                if safe_time <= 0:
+                if time_remaining <= 0.05:
                     break
 
-                iteration_best_op = func_timeout(safe_time, self.get_op, args=(env, agent_id, depth))
+                iteration_best_op = self.get_op(env, agent_id, depth, start_time, time_limit)
                 
                 best_op = iteration_best_op
                 
-            except FunctionTimedOut:
+            except self.TimeOut:
                 break
                 
         return best_op
 
-    def get_op(self, env: WarehouseEnv, agent_id, depth):
+    def get_op(self, env: WarehouseEnv, agent_id, depth, start_time, time_limit):
+        if time.time() - start_time > time_limit - 0.05:
+            raise self.TimeOut()
+        
         operators = env.get_legal_operators(agent_id)
         if not operators:
             return None
@@ -151,10 +161,13 @@ class AgentMinimax(Agent):
         best_op = operators[0]
 
         for op in operators:
+            if time.time() - start_time > time_limit - 0.05:
+                raise self.TimeOut()
+            
             child_env = env.clone()
             child_env.apply_operator(agent_id, op)
             
-            value = self.minimax(child_env, depth - 1, other_robot, agent_id)
+            value = self.minimax(child_env, depth - 1, other_robot, agent_id, start_time, time_limit)
             
             if value > best_value:
                 best_value = value
@@ -162,7 +175,10 @@ class AgentMinimax(Agent):
                 
         return best_op
     
-    def minimax(self, env: WarehouseEnv, depth, current_agent_id, original_agent_id):
+    def minimax(self, env: WarehouseEnv, depth, current_agent_id, original_agent_id, start_time, time_limit):
+        if time.time() - start_time > time_limit - 0.05:
+            raise self.TimeOut()
+        
         if depth == 0 or env.done():
             return smart_heuristic(env, original_agent_id)
         
@@ -176,16 +192,20 @@ class AgentMinimax(Agent):
         if is_max:
             value = -math.inf
             for op in operators:
+                if time.time() - start_time > time_limit - 0.05:
+                    raise self.TimeOut()
                 child_env = env.clone()
                 child_env.apply_operator(current_agent_id, op)
-                value = max(value, self.minimax(child_env, depth - 1, other_robot, original_agent_id))
+                value = max(value, self.minimax(child_env, depth - 1, other_robot, original_agent_id, start_time, time_limit))
             return value
         else:
             value = math.inf
             for op in operators:
+                if time.time() - start_time > time_limit - 0.05:
+                    raise self.TimeOut()
                 child_env = env.clone()
                 child_env.apply_operator(current_agent_id, op)
-                value = min(value, self.minimax(child_env, depth - 1, other_robot, original_agent_id))
+                value = min(value, self.minimax(child_env, depth - 1, other_robot, original_agent_id, start_time, time_limit))
             return value
 
 
