@@ -241,8 +241,7 @@ class AgentAlphaBeta(Agent):
         operators = env.get_legal_operators(agent_id)
         if not operators:
             return None
-        
-        operators.sort(key=lambda op: self.quick_heuristic(op), reverse=True)
+    
 
         # Check the best operation from last iteration first for better pruning
         if fallback_op in operators:
@@ -256,7 +255,9 @@ class AgentAlphaBeta(Agent):
         beta = math.inf
 
         for op in operators:
-            # TODO: Add time check here too?
+            time_remaining = time_limit - (time.time() - start_time)
+            if time_remaining <= 0.05:
+                raise self.TimeOut()
             child_env = env.clone()
             child_env.apply_operator(agent_id, op)
             
@@ -290,7 +291,9 @@ class AgentAlphaBeta(Agent):
         if is_max:
             value = -math.inf
             for op in operators:
-                # TODO: Add time check here too?
+                time_remaining = time_limit - (time.time() - start_time)
+                if time_remaining <= 0.05:
+                    raise self.TimeOut()
                 child_env = env.clone()
                 child_env.apply_operator(current_agent_id, op)
                 value = max(value, self.alpha_beta_minimax(child_env, depth - 1, other_robot, original_agent_id, alpha, beta, start_time, time_limit))
@@ -302,7 +305,9 @@ class AgentAlphaBeta(Agent):
         else:
             value = math.inf
             for op in operators:
-                # TODO: Add time check here too?
+                time_remaining = time_limit - (time.time() - start_time)
+                if time_remaining <= 0.05:
+                    raise self.TimeOut()
                 child_env = env.clone()
                 child_env.apply_operator(current_agent_id, op)
                 value = min(value, self.alpha_beta_minimax(child_env, depth - 1, other_robot, original_agent_id, alpha, beta, start_time, time_limit))
@@ -310,13 +315,6 @@ class AgentAlphaBeta(Agent):
                 if beta <= alpha:
                     break
             return value
-    
-    # TODO: improve this heuristic, keep it fast
-    def quick_heuristic(self, op):
-        if op == 'drop off': return 100
-        if op == 'pick up': return 50
-        if 'move' in op: return 1
-        return 0
 
     class TimeOut(Exception):
         pass
