@@ -215,15 +215,9 @@ class AgentAlphaBeta(Agent):
         beta = math.inf
 
         for op in operators:
-<<<<<<< HEAD
-            if time.time() - start_time > time_limit - 0.1:
-                raise self.TimeOut()
-
-=======
             time_remaining = time_limit - (time.time() - start_time)
             if time_remaining <= 0.05:
                 raise self.TimeOut()
->>>>>>> 4f6145a98cca7fe0f99877c99e39d5c31e46c767
             child_env = env.clone()
             child_env.apply_operator(agent_id, op)
 
@@ -260,12 +254,8 @@ class AgentAlphaBeta(Agent):
         if is_max:
             value = -math.inf
             for op in operators:
-<<<<<<< HEAD
-                if time.time() - start_time > time_limit - 0.1:
-=======
                 time_remaining = time_limit - (time.time() - start_time)
                 if time_remaining <= 0.05:
->>>>>>> 4f6145a98cca7fe0f99877c99e39d5c31e46c767
                     raise self.TimeOut()
                 child_env = env.clone()
                 child_env.apply_operator(current_agent_id, op)
@@ -278,12 +268,8 @@ class AgentAlphaBeta(Agent):
         else:
             value = math.inf
             for op in operators:
-<<<<<<< HEAD
-                if time.time() - start_time > time_limit - 0.1:
-=======
                 time_remaining = time_limit - (time.time() - start_time)
                 if time_remaining <= 0.05:
->>>>>>> 4f6145a98cca7fe0f99877c99e39d5c31e46c767
                     raise self.TimeOut()
                 child_env = env.clone()
                 child_env.apply_operator(current_agent_id, op)
