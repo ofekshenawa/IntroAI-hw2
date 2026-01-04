@@ -310,12 +310,9 @@ class AgentAlphaBeta(Agent):
         beta = math.inf
 
         for op in operators:
-<<<<<<< HEAD
-=======
             time_remaining = time_limit - (time.time() - start_time)
             if time_remaining <= 0.05:
                 raise self.TimeOut()
->>>>>>> 4f6145a98cca7fe0f99877c99e39d5c31e46c767
             child_env = env.clone()
             child_env.apply_operator(agent_id, op)
 
